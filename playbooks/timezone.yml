@@ -1,0 +1,17 @@
+- name: Set timezone and configure timesyncd
+  hosts: "*"
+  become: true
+  tasks:
+  - name: set timezone
+    shell: timedatectl set-timezone America/Sao_Paulo
+
+  - name: Make sure timesyncd is stopped
+    systemd:
+      name: systemd-timesyncd.service
+      state: stopped
+
+  - name: Make sure timesyncd is started
+    systemd:
+      name: systemd-timesyncd.service
+      state: started
+      
