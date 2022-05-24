@@ -6,6 +6,5 @@
     shell: |
       kind create cluster --name goat
       git clone https://github.com/madhuakula/kubernetes-goat.git
-      chmod +x ./kubernetes-goat/setup-kubernetes-goat.sh
-      cd ./kubernetes-goat/
-      bash setup-kubernetes-goat.sh
+      cd ./kubernetes-goat/kind-setup
+      bash setup-kind-cluster-and-goat.sh
