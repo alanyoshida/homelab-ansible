@@ -17,3 +17,19 @@ install-debug-tools:
 .PHONY: install-kind
 install-kind:
 	ansible-playbook ./playbooks/kind.yml --user p0ir0t --ask-pass --ask-become-pass -i ./inventory/hosts
+
+.PHONY: install-goat
+install-goat:
+	ansible-playbook --user p0ir0t --private-key ~/.ssh/id_rsa \
+	./playbooks/apt.yml \
+	./playbooks/debug-tools.yml \
+	./playbooks/docker.yml \
+	./playbooks/kind.yml \
+	./playbooks/k8s-goat.yml \
+	-i ./inventory/hosts
+
+.PHONY: apply-goat
+apply-goat:
+	ansible-playbook --user p0ir0t --private-key ~/.ssh/id_rsa \
+	./playbooks/k8s-goat.yml \
+	-i ./inventory/hosts

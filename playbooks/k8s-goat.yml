@@ -1,0 +1,11 @@
+- name: Install Goat
+  hosts: "*"
+  become: true
+  tasks:
+  - name: Install Goat
+    shell: |
+      kind create cluster --name goat
+      git clone https://github.com/madhuakula/kubernetes-goat.git
+      chmod +x ./kubernetes-goat/setup-kubernetes-goat.sh
+      cd ./kubernetes-goat/
+      bash setup-kubernetes-goat.sh
