@@ -21,6 +21,7 @@
       - git
       - vim
       - net-tools
+      - qemu-guest-agent
 
 # Configure VM
   - name: set timezone
