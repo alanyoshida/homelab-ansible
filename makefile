@@ -33,3 +33,15 @@ apply-goat:
 	ansible-playbook --user p0ir0t --private-key ~/.ssh/id_rsa \
 	./playbooks/k8s-goat.yml \
 	-i ./inventory/hosts
+
+.PHONY: install-k8s-master
+install-k8s-master:
+	ansible-playbook --user p0ir0t --private-key ~/.ssh/id_rsa --ask-become-pass \
+	./playbooks/k8s-master.yml \
+	-i ./inventory/hosts -l k8s-master
+
+.PHONY: install-k8s-node
+install-k8s-node:
+	ansible-playbook --user p0ir0t --private-key ~/.ssh/id_rsa --ask-become-pass \
+	./playbooks/k8s-node.yml \
+	-i ./inventory/hosts -l k8s-node
