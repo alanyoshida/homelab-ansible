@@ -92,6 +92,16 @@
       state: started
       masked: no
 
+  - name: Create crictl config
+    blockinfile:
+      create: true
+      path: /etc/crictl.yaml
+      block: |
+        runtime-endpoint: unix:///var/run/containerd/containerd.sock
+        image-endpoint: unix:///var/run/containerd/containerd.sock
+        timeout: 10
+        debug: false
+
 # Install runC
 
   - name: Download runc
