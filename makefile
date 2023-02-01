@@ -45,3 +45,15 @@ install-k8s-node:
 	ansible-playbook --user p0ir0t --private-key ~/.ssh/id_rsa --ask-become-pass \
 	./playbooks/k8s-node.yml \
 	-i ./inventory/hosts -l k8s-node
+
+.PHONY: install-k8s-master-cilium
+install-k8s-master-cilium:
+	ansible-playbook --user p0ir0t --private-key ~/.ssh/id_rsa --ask-become-pass \
+	./playbooks/k8s-master-cilium.yml \
+	-i ./inventory/hosts -l k8s-master-cilium
+
+.PHONY: install-k8s-node-cilium
+install-k8s-node-cilium:
+	ansible-playbook --user p0ir0t --private-key ~/.ssh/id_rsa --ask-become-pass \
+	./playbooks/k8s-node-cilium.yml \
+	-i ./inventory/hosts -l k8s-node-cilium
