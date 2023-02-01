@@ -1,0 +1,285 @@
+---
+- hosts: all
+  become: true
+  environment:
+    hostname: k8s-node
+  #   KUBECONFIG: /etc/kubernetes/admin.conf
+  tasks:
+    - name: Install packages that allow apt to be used over HTTPS
+      apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      vars:
+        packages:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - gnupg2
+          - lsb-release
+          - git
+          - vim
+          - net-tools
+          - qemu-guest-agent
+          - llvm-14
+          - iproute2
+
+    # Configure VM
+
+    - name: Set a hostname
+      ansible.builtin.hostname:
+        name: "{{ansible_env.hostname}}"
+
+    - name: Remove swapfile from /etc/fstab
+      mount:
+        name: "{{ item }}"
+        fstype: swap
+        state: absent
+      with_items:
+        - swap
+        - none
+
+    - name: Disable swap
+      command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+
+    - name: Enable kernel modules
+      shell: |
+        modprobe overlay
+        modprobe br_netfilter
+
+    - name: set timezone
+      shell: timedatectl set-timezone America/Sao_Paulo
+
+    - name: Make sure timesyncd is stopped
+      systemd:
+        name: systemd-timesyncd.service
+        state: stopped
+
+    - name: Make sure timesyncd is started
+      systemd:
+        name: systemd-timesyncd.service
+        state: started
+
+    - name: Configure IP forwarding and iptables
+      blockinfile:
+        create: true
+        path: /etc/modules-load.d/k8s.conf
+        block: |
+          overlay
+          br_netfilter
+
+    - name: sysctl params required by setup, params persist across reboots
+      blockinfile:
+        create: true
+        path: /etc/sysctl.d/k8s.conf
+        block: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
+
+    - name: Systemd 245 and above (systemctl --version) overrides rp_filter setting of Cilium network interfaces.
+      blockinfile:
+        create: true
+        path: /etc/sysctl.d/99-override_cilium_rp_filter.conf
+        block: |
+          net.ipv4.conf.lxc*.rp_filter = 0
+
+    # GRUB
+    - name: "Checking GRUB cmdline"
+      shell: "grep 'GRUB_CMDLINE_LINUX_DEFAULT=.*bpf.*' /etc/default/grub"
+      register: ebpf_status
+      changed_when: false
+      failed_when: false
+
+    - name: Enable ebpf in kernel
+      lineinfile:
+        dest: "/etc/default/grub"
+        regexp: 'GRUB_CMDLINE_LINUX_DEFAULT="(.*)"'
+        line: 'GRUB_CMDLINE_LINUX_DEFAULT="\1 lsm=lockdown,capability,yama,apparmor,bpf"'
+        backrefs: yes
+      when: ebpf_status.stdout == "1"
+
+    # Kernel needs the following modules enabled
+    #       CONFIG_BPF=y
+    #       CONFIG_BPF_SYSCALL=y
+    #       CONFIG_NET_CLS_BPF=y
+    #       CONFIG_BPF_JIT=y
+    #       CONFIG_NET_CLS_ACT=y
+    #       CONFIG_NET_SCH_INGRESS=y
+    #       CONFIG_CRYPTO_SHA1=y
+    #       CONFIG_CRYPTO_USER_API_HASH=y
+    #       CONFIG_CGROUPS=y
+    #       CONFIG_CGROUP_BPF=y
+
+    - name: Apply sysctl params without reboot
+      command: sysctl --system
+
+    # Install ContainerD from binary
+
+    - name: "Check if containerd is installed"
+      stat:
+        path: "/usr/local/bin/containerd"
+      register: containerd_bin
+
+    - name: Extract Containerd
+      when: not containerd_bin.stat.exists
+      ansible.builtin.unarchive:
+        src: https://github.com/containerd/containerd/releases/download/v1.6.6/containerd-1.6.6-linux-amd64.tar.gz
+        dest: /usr/local
+        remote_src: yes
+
+    - name: "Check if containerd service exists"
+      stat:
+        path: "/usr/lib/systemd/system/containerd.service"
+      register: containerd_service
+
+    - name: Install containerd service
+      when: not containerd_service.stat.exists
+      get_url:
+        url: https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
+        dest: /usr/lib/systemd/system/containerd.service
+        mode: "0644"
+
+    - name: Just force systemd to reread configs
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+    - name: Enable service containerd
+      ansible.builtin.systemd:
+        name: containerd
+        enabled: yes
+        state: started
+        masked: no
+
+    - name: "Check if crictl config exists"
+      stat:
+        path: "/etc/crictl.yaml"
+      register: crictl
+
+    - name: Create crictl config
+      when: not crictl.stat.exists
+      blockinfile:
+        create: true
+        path: /etc/crictl.yaml
+        block: |
+          runtime-endpoint: unix:///var/run/containerd/containerd.sock
+          image-endpoint: unix:///var/run/containerd/containerd.sock
+          timeout: 10
+          debug: false
+
+    # Install runC
+
+    - name: "Check if runc exists"
+      stat:
+        path: "/usr/local/sbin/runc"
+      register: runc
+
+    - name: Download runc
+      when: not runc.stat.exists
+      get_url:
+        url: https://github.com/opencontainers/runc/releases/download/v1.1.3/runc.amd64
+        dest: /usr/local/sbin/runc
+        mode: "0755"
+
+    # Install CNI Plugins
+
+    - name: Create a directory if it does not exist
+      ansible.builtin.file:
+        path: /opt/cni/bin
+        state: directory
+        mode: "0755"
+
+    - name: "Check if Plugins exists"
+      stat:
+        path: "/opt/cni/bin/loopback"
+      register: plugins
+
+    - name: Extract CNI Plugins
+      when: not plugins.stat.exists
+      ansible.builtin.unarchive:
+        src: https://github.com/containernetworking/plugins/releases/download/v1.1.1/cni-plugins-linux-amd64-v1.1.1.tgz
+        dest: /opt/cni/bin
+        remote_src: yes
+
+    # Configuring systemd cgroup
+
+    - name: Create a directory if it does not exist
+      ansible.builtin.file:
+        path: /etc/containerd/
+        state: directory
+        mode: "0755"
+
+    - name: "Check if containerd config exists"
+      stat:
+        path: "/etc/containerd/config.toml"
+      register: containerdconfig
+
+    - name: generate containerd config
+      when: not containerdconfig.stat.exists
+      command: containerd config default
+      register: configtoml
+
+    # - debug: msg="{{ toml }}"
+    - name: "Create config.toml"
+      copy:
+        content: "{{ configtoml.stdout }}"
+        dest: /etc/containerd/config.toml
+
+    - name: Enable SystemdCgroup in containerd
+      lineinfile:
+        dest: "/etc/containerd/config.toml"
+        regexp: "SystemdCgroup = (false)"
+        line: "\1true"
+        backrefs: yes
+
+    - name: Restart service containerd
+      ansible.builtin.service:
+        name: containerd
+        state: restarted
+
+    - name: Just force systemd to reread configs (2.4 and above)
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+    # Kubernetes Install
+
+    - name: Add an apt signing key for Kubernetes
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        state: present
+
+    - name: Adding apt repository for Kubernetes
+      apt_repository:
+        repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+        filename: kubernetes.list
+
+    - name: Install Kubernetes binaries
+      apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      vars:
+        packages:
+          - kubelet=1.24.2-00
+          - kubeadm=1.24.2-00
+          - kubectl=1.24.2-00
+
+    - name: Just force systemd to reread configs (2.4 and above)
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+    - name: Enable and check kubelet service
+      systemd:
+        name: kubelet
+        daemon_reload: yes
+        state: started
+        enabled: yes
+
+    - name: Copy the join command to server location
+      copy: src=join-command dest=/tmp/join-command.sh mode=0777
+
+    - name: Join the node to cluster
+      command: sh /tmp/join-command.sh
